@@ -1,7 +1,7 @@
 # mcp-toolkit
 
 > Fork of [metosin/mcp-toolkit](https://github.com/metosin/mcp-toolkit) with Streamable HTTP transport,
-> Babashka runtime support, plugin registry, and production hardening.
+> Babashka runtime support, and plugin registry.
 
 An unofficial MCP SDK for Clojure. Handles MCP client-server communication with a
 Clojure-idiomatic API. Targets protocol version **2025-11-25** (Streamable HTTP).
@@ -162,7 +162,7 @@ cljfmt fix src/ test/        # format
 
 - [x] Streamable HTTP (2025-11-25)
 - [x] STDIO
-- [x] SSE (contributions welcome)
+- [x] SSE (skeleton -- open an issue if you need it)
 - [x] Tools, Prompts, Resources
 - [x] Cancellation, Ping, Progress
 - [x] Roots, Sampling
@@ -173,7 +173,3 @@ cljfmt fix src/ test/        # format
 
 EPL v2.0. Copyright (c) [Metosin](https://metosin.fi) and contributors (upstream)
 with additions by [noblepayne](https://github.com/noblepayne) (fork).
-
-The fork adds approximately 4000 lines over upstream (transport, registry,
-promise shim, tests, Nix infrastructure) while keeping the core protocol
-handling (~600 lines) compatible for upstream merging.
