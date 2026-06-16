@@ -7,6 +7,34 @@
             [mcp-toolkit.impl.promise :as p]))
 
 ;;
+;; InitializeResult helpers
+;;
+
+(def default-server-info
+  {:name "mcp-server" :version "0.1.0"})
+
+(defn make-initialize-result
+  "Build a spec-compliant InitializeResult map.
+   See https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle
+
+   Returns:
+     {:protocolVersion \"2025-11-25\"
+      :capabilities {...}
+      :serverInfo {:name \"...\" :version \"...\"}}
+
+   Options (all optional):
+     :server-info      — map with :name and :version (default: default-server-info)
+     :capabilities     — map of server capabilities (default: {})
+     :protocol-version — protocol version string (default: \"2025-11-25\")"
+  [& {:keys [server-info capabilities protocol-version]
+      :or {server-info default-server-info
+           protocol-version "2025-11-25"
+           capabilities {}}}]
+  {:protocolVersion protocol-version
+   :capabilities capabilities
+   :serverInfo server-info})
+
+;;
 ;; Functions typically called from a prompt-fn or a tool-fn
 ;;
 

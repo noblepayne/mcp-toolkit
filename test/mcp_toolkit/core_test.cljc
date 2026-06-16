@@ -135,3 +135,23 @@
 
                         ;; Pass through
                                           (or error x))))))))
+
+(deftest make-initialize-result-test
+  (testing "defaults"
+    (let [result (server/make-initialize-result)]
+      (is (= "2025-11-25" (:protocolVersion result)))
+      (is (= {:name "mcp-server" :version "0.1.0"} (:serverInfo result)))
+      (is (= {} (:capabilities result)))))
+  (testing "custom server-info"
+    (let [result (server/make-initialize-result
+                  :server-info {:name "datom-mcp" :version "0.2.0"})]
+      (is (= "datom-mcp" (get-in result [:serverInfo :name])))
+      (is (= "0.2.0" (get-in result [:serverInfo :version])))))
+  (testing "custom capabilities"
+    (let [result (server/make-initialize-result
+                  :capabilities {:tools {:listChanged true}})]
+      (is (= {:tools {:listChanged true}} (:capabilities result)))))
+  (testing "protocol version override"
+    (let [result (server/make-initialize-result
+                  :protocol-version "2025-06-18")]
+      (is (= "2025-06-18" (:protocolVersion result))))))
