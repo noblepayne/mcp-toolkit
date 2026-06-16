@@ -132,6 +132,22 @@
 
 ---
 
+### Session: 2026-06-15 — Production Readiness + Nix Distribution
+
+| Commit | What | Why |
+|--------|------|-----|
+| (pending) | Request timeouts in tool-call-handler | Configurable `:timeout` field → `p/timeout`, JSON-RPC error on timeout |
+| (pending) | Graceful shutdown via addShutdownHook | SIGTERM handler: stop accepting, drain in-flight, close SSE, stop server |
+| (pending) | Session TTL sweeper background daemon | `start-session-sweeper!` with configurable interval/ttl, auto-cleanup |
+| (pending) | Transport error consistency | All errors → `{:jsonrpc "2.0" :error ...}` format |
+| (pending) | Content-Type enforcement on POST /mcp | Reject non-`application/json` with 415 |
+| (pending) | Integration tests: 7 real http-kit lifecycle tests | Full lifecycle, terminated rejection, content-type, bad version, etc. |
+| (pending) | flake.nix + deps-lock.json | Nix devShell (jdk21+clojure+bb+clj-kondo+cljfmt+jet) + deps-lock |
+| (pending) | Lint/format cleanup | 0 errors, 0 warnings, cljfmt applied |
+| (pending) | CLJS + mcp-clojure-sdk review | Confirmed: promise shim has reader conditionals, spec alignment verified |
+
+---
+
 ### Session: 2026-04-03 — Plan Review & Architecture
 
 | Commit | What | Why |

@@ -29,75 +29,75 @@
 (Thread/sleep 100)
 
 (test "initialize returns 200 + session-id"
-  (fn []
-    (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
-                    {:headers {"Content-Type" "application/json"
-                               "MCP-Protocol-Version" "2025-11-25"}
-                     :body (json/generate-string {:jsonrpc "2.0" :id 1 :method "initialize"})})]
-      (assert (= 200 (:status resp)))
-      (assert (get (:headers resp) :mcp-session-id)))))
+      (fn []
+        (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
+                                 {:headers {"Content-Type" "application/json"
+                                            "MCP-Protocol-Version" "2025-11-25"}
+                                  :body (json/generate-string {:jsonrpc "2.0" :id 1 :method "initialize"})})]
+          (assert (= 200 (:status resp)))
+          (assert (get (:headers resp) :mcp-session-id)))))
 
 (def session-id
   (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
-                  {:headers {"Content-Type" "application/json"
-                             "MCP-Protocol-Version" "2025-11-25"}
-                   :body (json/generate-string {:jsonrpc "2.0" :id 1 :method "initialize"})})]
+                           {:headers {"Content-Type" "application/json"
+                                      "MCP-Protocol-Version" "2025-11-25"}
+                            :body (json/generate-string {:jsonrpc "2.0" :id 1 :method "initialize"})})]
     (get (:headers resp) :mcp-session-id)))
 
 (test "tools/list returns tool list"
-  (fn []
-    (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
-                    {:headers {"Content-Type" "application/json"
-                               "MCP-Session-Id" session-id}
-                     :body (json/generate-string {:jsonrpc "2.0" :id 2 :method "tools/list"})})
-          body (json/parse-string (:body resp) true)]
-      (assert (= 200 (:status resp)))
-      (assert (get-in body [:result :tools])))))
+      (fn []
+        (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
+                                 {:headers {"Content-Type" "application/json"
+                                            "MCP-Session-Id" session-id}
+                                  :body (json/generate-string {:jsonrpc "2.0" :id 2 :method "tools/list"})})
+              body (json/parse-string (:body resp) true)]
+          (assert (= 200 (:status resp)))
+          (assert (get-in body [:result :tools])))))
 
 (test "tools/call returns result"
-  (fn []
-    (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
-                    {:headers {"Content-Type" "application/json"
-                               "MCP-Session-Id" session-id}
-                     :body (json/generate-string {:jsonrpc "2.0" :id 3 :method "tools/call"
-                                                  :params {:name "test-tool" :arguments {}}})})
-          body (json/parse-string (:body resp) true)]
-      (assert (= 200 (:status resp)))
-      (assert (get-in body [:result :content])))))
+      (fn []
+        (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
+                                 {:headers {"Content-Type" "application/json"
+                                            "MCP-Session-Id" session-id}
+                                  :body (json/generate-string {:jsonrpc "2.0" :id 3 :method "tools/call"
+                                                               :params {:name "test-tool" :arguments {}}})})
+              body (json/parse-string (:body resp) true)]
+          (assert (= 200 (:status resp)))
+          (assert (get-in body [:result :content])))))
 
 (test "DELETE /mcp returns 200"
-  (fn []
-    (let [resp @(client/delete (str "http://127.0.0.1:" port "/mcp")
-                    {:headers {"MCP-Session-Id" session-id}})]
-      (assert (= 200 (:status resp))))))
+      (fn []
+        (let [resp @(client/delete (str "http://127.0.0.1:" port "/mcp")
+                                   {:headers {"MCP-Session-Id" session-id}})]
+          (assert (= 200 (:status resp))))))
 
 (test "terminated session returns 404"
-  (fn []
-    (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
-                    {:headers {"Content-Type" "application/json"
-                               "MCP-Session-Id" session-id}
-                     :body (json/generate-string {:jsonrpc "2.0" :id 4 :method "tools/list"})})]
-      (assert (= 404 (:status resp))))))
+      (fn []
+        (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
+                                 {:headers {"Content-Type" "application/json"
+                                            "MCP-Session-Id" session-id}
+                                  :body (json/generate-string {:jsonrpc "2.0" :id 4 :method "tools/list"})})]
+          (assert (= 404 (:status resp))))))
 
 (test "GET /health returns 200"
-  (fn []
-    (let [resp @(client/get (str "http://127.0.0.1:" port "/health"))]
-      (assert (= 200 (:status resp))))))
+      (fn []
+        (let [resp @(client/get (str "http://127.0.0.1:" port "/health"))]
+          (assert (= 200 (:status resp))))))
 
 (test "missing session-id returns 400"
-  (fn []
-    (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
-                    {:headers {"Content-Type" "application/json"}
-                     :body (json/generate-string {:jsonrpc "2.0" :id 5 :method "tools/list"})})]
-      (assert (= 400 (:status resp))))))
+      (fn []
+        (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
+                                 {:headers {"Content-Type" "application/json"}
+                                  :body (json/generate-string {:jsonrpc "2.0" :id 5 :method "tools/list"})})]
+          (assert (= 400 (:status resp))))))
 
 (test "bad protocol version returns 400"
-  (fn []
-    (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
-                    {:headers {"Content-Type" "application/json"
-                               "MCP-Protocol-Version" "2099-01-01"}
-                     :body (json/generate-string {:jsonrpc "2.0" :id 6 :method "initialize"})})]
-      (assert (= 400 (:status resp))))))
+      (fn []
+        (let [resp @(client/post (str "http://127.0.0.1:" port "/mcp")
+                                 {:headers {"Content-Type" "application/json"
+                                            "MCP-Protocol-Version" "2099-01-01"}
+                                  :body (json/generate-string {:jsonrpc "2.0" :id 6 :method "initialize"})})]
+          (assert (= 400 (:status resp))))))
 
 (server :timeout 100)
 (println (str "\n" @passed "/" @total " tests passed"))

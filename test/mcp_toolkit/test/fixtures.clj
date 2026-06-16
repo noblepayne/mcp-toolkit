@@ -131,7 +131,8 @@
           :session-store session-store
           :server server})
       (finally
-        (http/server-stop! server)))))
+        (server 100) ; stop with 100ms timeout (http-kit 2.8 returns stop fn, not server record)
+        ))))
 
 ;; ─── Test Data Generators ───────────────────────────────────────────────────
 

@@ -241,6 +241,32 @@
                                       terminated))))
      (count (:terminated @store)))))
 
+(defn- start-session-sweeper!
+  "Start a background daemon thread that periodically prunes expired terminated sessions.
+   Returns a zero-arg stop function.
+
+   Options:
+     :interval-ms  — sleep between sweeps in ms (default: 60000)
+     :ttl-ms       — session TTL in ms for prune-expired-sessions! (default: 3600000)"
+  [session-store & [{:keys [interval-ms ttl-ms]
+                     :or {interval-ms 60000
+                          ttl-ms 3600000}}]]
+  (let [running (atom true)]
+    (doto (Thread. (fn []
+                     (while @running
+                       (try
+                         (Thread/sleep interval-ms)
+                         (prune-expired-sessions! session-store ttl-ms)
+                         (catch InterruptedException _
+                           (reset! running false))
+                         (catch Exception e
+                           (log-event "warn" "sweeper-error"
+                                      {:error (.getMessage e)
+                                       :error-class (.getName (class e))}))))))
+      (.setDaemon true)
+      .start)
+    #(reset! running false)))
+
 (defn- json-response
   "Create a JSON HTTP response."
   ([status body]
@@ -316,42 +342,56 @@
                    {:jsonrpc "2.0"
                     :error {:code -32600
                             :message "Forbidden: invalid Origin header"}})
-    ;; Check protocol version first
     (if-let [version-error (validate-protocol-version request)]
       (json-response 400 version-error)
-      (let [body (parse-body request)]
-        (cond
-          (nil? body)
-          (json-response 400 {:error "Missing request body"})
+      (let [content-type (str/lower-case (or (find-header request "Content-Type") ""))]
+        (if (and (not (str/blank? content-type))
+                 (not (str/includes? content-type "application/json")))
+          (json-response 415
+                         {:jsonrpc "2.0"
+                          :error {:code -32600
+                                  :message "Content-Type must be application/json"}})
+          (let [body (parse-body request)]
+            (cond
+              (nil? body)
+              (json-response 400
+                             {:jsonrpc "2.0"
+                              :error {:code -32700
+                                      :message "Parse error: request body is empty"}})
 
-          (= body :parse-error)
-          (json-response 400 {:error "Invalid JSON"})
+              (= body :parse-error)
+              (json-response 400
+                             {:jsonrpc "2.0"
+                              :error {:code -32700
+                                      :message "Parse error: invalid JSON"}})
 
-          :else
-          (let [session-id (find-header request "MCP-Session-Id")
-                method (:method body)
-                new-session? (= method "initialize")]
-            (if new-session?
-              ;; initialize — always create a new session
-              (let [sid (create-session! session-store)]
-                (touch-session! session-store sid)
-                (let [response (dispatch-fn body sid)]
-                  (handle-dispatch-response response true sid)))
-              ;; Non-initialize — session must exist or be terminated
-              (cond
-                (terminated-session? session-store session-id)
-                (json-response 404
-                               {:error "Session has been terminated"})
+              :else
+              (let [session-id (find-header request "MCP-Session-Id")
+                    method (:method body)
+                    new-session? (= method "initialize")]
+                (if new-session?
+                  (let [sid (create-session! session-store)]
+                    (touch-session! session-store sid)
+                    (let [response (dispatch-fn body sid)]
+                      (handle-dispatch-response response true sid)))
+                  (cond
+                    (terminated-session? session-store session-id)
+                    (json-response 404
+                                   {:jsonrpc "2.0"
+                                    :error {:code -32600
+                                            :message "Session has been terminated"}})
 
-                (not (valid-session? session-store session-id))
-                (json-response 400
-                               {:error "Invalid or missing MCP-Session-Id"})
+                    (not (valid-session? session-store session-id))
+                    (json-response 400
+                                   {:jsonrpc "2.0"
+                                    :error {:code -32600
+                                            :message "Invalid or missing MCP-Session-Id"}})
 
-                :else
-                (do
-                  (touch-session! session-store session-id)
-                  (let [response (dispatch-fn body session-id)]
-                    (handle-dispatch-response response false session-id)))))))))))
+                    :else
+                    (do
+                      (touch-session! session-store session-id)
+                      (let [response (dispatch-fn body session-id)]
+                        (handle-dispatch-response response false session-id)))))))))))))
 
 (defn- handle-get
   "Handle GET /mcp — server→client SSE stream.
@@ -368,13 +408,22 @@
     (let [session-id (find-header request "MCP-Session-Id")]
       (cond
         (nil? session-id)
-        (json-response 400 {:error "MCP-Session-Id header required for SSE stream"})
+        (json-response 400
+                       {:jsonrpc "2.0"
+                        :error {:code -32600
+                                :message "MCP-Session-Id header required for SSE stream"}})
 
         (terminated-session? session-store session-id)
-        (json-response 404 {:error "Session has been terminated"})
+        (json-response 404
+                       {:jsonrpc "2.0"
+                        :error {:code -32600
+                                :message "Session has been terminated"}})
 
         (not (valid-session? session-store session-id))
-        (json-response 404 {:error "Session not found"})
+        (json-response 404
+                       {:jsonrpc "2.0"
+                        :error {:code -32600
+                                :message "Session not found"}})
 
         :else
         (http/as-channel request
@@ -393,7 +442,10 @@
   [request session-store]
   (let [session-id (find-header request "MCP-Session-Id")]
     (if (nil? session-id)
-      (json-response 400 {:error "MCP-Session-Id header required"})
+      (json-response 400
+                     {:jsonrpc "2.0"
+                      :error {:code -32600
+                              :message "MCP-Session-Id header required"}})
       (case (delete-session! session-store session-id)
         :existed
         {:status 200 :headers {} :body ""}
@@ -402,7 +454,10 @@
         {:status 200 :headers {} :body ""}
 
         :not-found
-        (json-response 404 {:error "Session not found"})))))
+        (json-response 404
+                       {:jsonrpc "2.0"
+                        :error {:code -32600
+                                :message "Session not found"}})))))
 
 ;; ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -419,9 +474,11 @@
 
    Returns a function suitable for http-kit/run-server.
 
-   Note: session pruning is NOT automatic. Call `prune-expired-sessions!`
+   Note: If you use `create-handler` directly (not via `run-server`),
+   session pruning is NOT automatic. Call `prune-expired-sessions!`
    periodically to reclaim terminated sessions:
-     (prune-expired-sessions! session-store session-ttl-ms)"
+     (prune-expired-sessions! session-store session-ttl-ms)
+   Use `run-server` for automatic lifecycle management (sweeper + shutdown hook)."
   [dispatch-fn & [{:keys [session-store allowed-origins]
                    :or {session-store (create-session-store)
                         allowed-origins []}}]]
@@ -451,19 +508,38 @@
       request)))
 
 (defn run-server
-  "Start an MCP server with Streamable HTTP transport.
+  "Start an MCP server with Streamable HTTP transport and
+   lifecycle management (shutdown hook, session sweeper).
 
    dispatch-fn: (fn [json-rpc-message session-id] response-map-or-nil)
    Options:
-     :port             — HTTP port (default: 0 = random available port)
-     :host             — HTTP host (default: \"127.0.0.1\")
-     :session-store    — atom for session management
-     :allowed-origins  — vector of allowed Origin headers
-     :session-ttl-ms   — session TTL in milliseconds
+     :port              — HTTP port (default: 0 = random available port)
+     :host              — HTTP host (default: \"127.0.0.1\")
+     :session-store     — atom for session management
+     :allowed-origins   — vector of allowed Origin headers
+     :session-ttl-ms    — TTL for terminated sessions in ms (default: 3600000)
+     :sweeper-interval  — session sweep interval in ms (default: 60000)
+     :shutdown-timeout  — graceful shutdown timeout in ms (default: 5000)
+     :auto-shutdown?    — register JVM shutdown hook (default: true)
 
-   Returns the server map (with :local-port in metadata)."
-  [dispatch-fn & [{:keys [port host]
-                   :or {port 0 host "127.0.0.1"}
+   Returns the http-kit server stop fn."
+  [dispatch-fn & [{:keys [port host session-store session-ttl-ms sweeper-interval shutdown-timeout auto-shutdown?]
+                   :or {port 0 host "127.0.0.1"
+                        session-ttl-ms 3600000
+                        sweeper-interval 60000
+                        shutdown-timeout 5000
+                        auto-shutdown? true}
                    :as opts}]]
-  (let [handler (create-handler dispatch-fn opts)]
-    (http/run-server handler {:port port :ip host})))
+  (let [session-store (or session-store (create-session-store))
+        handler (create-handler dispatch-fn (assoc opts :session-store session-store))
+        stop-server (http/run-server handler {:port port :ip host})]
+    (start-session-sweeper! session-store
+                            {:interval-ms sweeper-interval
+                             :ttl-ms session-ttl-ms})
+    (when auto-shutdown?
+      (.addShutdownHook (Runtime/getRuntime)
+                        (Thread. (fn []
+                                   (log-event "info" "server-shutdown"
+                                              {:reason "JVM shutdown hook"})
+                                   (stop-server shutdown-timeout)))))
+    stop-server))

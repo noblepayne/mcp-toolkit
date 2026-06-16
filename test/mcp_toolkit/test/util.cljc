@@ -1,5 +1,5 @@
 (ns mcp-toolkit.test.util
-  (:require [clojure.test :refer [deftest testing is are]]
+  (:require [clojure.test :refer [is]]
             [promesa.core :as p]))
 
 (defn- assertion-error [message]
@@ -11,7 +11,7 @@
    or will reject to an assertion error if not resolved before it times out."
   [atom pass? timeout-ms message]
   (let [watcher-key (gensym "assert-atom")]
-    (-> (p/create (fn [resolve reject]
+    (-> (p/create (fn [resolve _reject]
                     (let [check-atom (fn [_watcher-key _atom _old-val new-val]
                                        (when (pass? new-val)
                                          (is true message)

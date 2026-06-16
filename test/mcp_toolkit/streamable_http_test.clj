@@ -2,9 +2,12 @@
   "HTTP integration tests for streamable_http transport.
    Tests POST/GET/DELETE cycles, session management, protocol versioning,
    origin validation, and session lifecycle per MCP 2025-11-25 spec."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [mcp-toolkit.test.fixtures :as fix]
-            [mcp-toolkit.transport.streamable-http :as transport]))
+            [mcp-toolkit.transport.streamable-http :as transport]
+            [org.httpkit.client :as http]
+            [cheshire.core :as json]))
 
 ;; Helper: initialize handler returns proper JSON-RPC response
 (defn- init-dispatcher
@@ -295,9 +298,8 @@
     (let [store (transport/create-session-store)
           sid (transport/create-session! store)
           mock-channel (Object.)]
-      (let [counter (transport/drain-pending-messages! store sid mock-channel)]
-        (is (contains? (get-in @store [:sessions sid :sse-channels]) mock-channel))
-        (is (some? counter))))))
+      (is (some? (transport/drain-pending-messages! store sid mock-channel)))
+      (is (contains? (get-in @store [:sessions sid :sse-channels]) mock-channel)))))
 
 (deftest deregister-sse-channel-removes-channel
   (testing "deregister-sse-channel! removes channel from session"
@@ -324,3 +326,157 @@
       (is (contains? (get-in @store [:sessions sid :sse-channels]) mock-channel))
       (transport/push-notification! store sid msg1)
       (is (nil? (get-in @store [:pending-sse-messages sid]))))))
+
+;; ─── Real HTTP Integration Tests ─────────────────────────────────────────────
+
+(defn- url-for
+  "Build the full MCP endpoint URL for a given port."
+  [port]
+  (str "http://127.0.0.1:" port "/mcp"))
+
+(defn- url-for-health
+  "Build the health endpoint URL."
+  [port]
+  (str "http://127.0.0.1:" port "/health"))
+
+(defn- parse-json-body
+  "Parse JSON string response body."
+  [resp]
+  (when (:body resp)
+    (try (json/parse-string (:body resp) true)
+         (catch Exception _ (:body resp)))))
+
+(deftest integration-full-lifecycle
+  (testing "Real HTTP lifecycle: init → tools/list → tools/call → delete"
+    (fix/with-http-server
+      (fn [{:keys [port]}]
+        (let [mcp (url-for port)
+              opts {:as :text
+                    :headers {"Content-Type" "application/json"
+                              "MCP-Protocol-Version" "2025-11-25"}}
+              init @(http/post mcp (assoc opts
+                                          :body (json/generate-string
+                                                 {:jsonrpc "2.0" :method "initialize" :id 1
+                                                  :params {:protocolVersion "2025-11-25"}})))
+              session-id (get-in init [:headers :mcp-session-id])]
+          (is (= 200 (:status init)))
+          (is (string? session-id))
+          (is (> (count session-id) 10))
+          (is (= "2025-11-25" (get-in (parse-json-body init) [:result :protocolVersion])))
+
+          (let [auth-opts {:as :text
+                           :headers {"Content-Type" "application/json"
+                                     "MCP-Session-Id" session-id}}
+                tools @(http/post mcp (assoc auth-opts
+                                             :body (json/generate-string
+                                                    {:jsonrpc "2.0" :method "tools/list" :id 2})))]
+            (is (= 200 (:status tools)))
+            (is (= [] (get-in (parse-json-body tools) [:result :tools]))))
+
+          (let [auth-opts {:as :text
+                           :headers {"Content-Type" "application/json"
+                                     "MCP-Session-Id" session-id}}
+                call @(http/post mcp (assoc auth-opts
+                                            :body (json/generate-string
+                                                   {:jsonrpc "2.0" :method "tools/call" :id 3
+                                                    :params {:name "test" :arguments {:x 1}}})))]
+            (is (= 200 (:status call)))
+            (is (= "Called test with {:x 1}" (get-in (parse-json-body call) [:result :content 0 :text]))))
+
+          (let [del @(http/delete mcp {:headers {"MCP-Session-Id" session-id}})]
+            (is (= 200 (:status del)))))))))
+
+(defn- init-session
+  "Helper: initialize a session over HTTP, return session-id."
+  [mcp]
+  (let [resp @(http/post mcp {:as :text
+                              :headers {"Content-Type" "application/json"
+                                        "MCP-Protocol-Version" "2025-11-25"}
+                              :body (json/generate-string
+                                     {:jsonrpc "2.0" :method "initialize" :id 1
+                                      :params {:protocolVersion "2025-11-25"}})})
+        sid (get-in resp [:headers :mcp-session-id])]
+    (is (= 200 (:status resp)))
+    (is (string? sid))
+    sid))
+
+(deftest integration-terminated-session-rejected
+  (testing "POST after DELETE returns 404 with JSON-RPC error"
+    (fix/with-http-server
+      (fn [{:keys [port]}]
+        (let [mcp (url-for port)
+              session-id (init-session mcp)
+              _ @(http/delete mcp {:headers {"MCP-Session-Id" session-id}})
+              tools @(http/post mcp {:as :text
+                                     :headers {"Content-Type" "application/json"
+                                               "MCP-Session-Id" session-id}
+                                     :body (json/generate-string
+                                            {:jsonrpc "2.0" :method "tools/list" :id 2})})
+              body (parse-json-body tools)]
+          (is (= 404 (:status tools)))
+          (is (= {:code -32600 :message "Session has been terminated"}
+                 (:error body))))))))
+
+(deftest integration-content-type-enforcement
+  (testing "POST with wrong Content-Type returns 415"
+    (fix/with-http-server
+      (fn [{:keys [port]}]
+        (let [resp @(http/post (url-for port)
+                               {:as :text
+                                :headers {"Content-Type" "text/plain"}
+                                :body "{}"})
+              body (parse-json-body resp)]
+          (is (= 415 (:status resp)))
+          (is (= {:code -32600 :message "Content-Type must be application/json"}
+                 (:error body))))))))
+
+(deftest integration-bad-protocol-version
+  (testing "POST with unsupported protocol version returns 400"
+    (fix/with-http-server
+      (fn [{:keys [port]}]
+        (let [resp @(http/post (url-for port)
+                               {:as :text
+                                :headers {"Content-Type" "application/json"
+                                          "MCP-Protocol-Version" "2099-01-01"}
+                                :body (json/generate-string
+                                       {:jsonrpc "2.0" :method "initialize" :id 1
+                                        :params {:protocolVersion "2099-01-01"}})})
+              body (parse-json-body resp)]
+          (is (= 400 (:status resp)))
+          (is (str/includes? (get-in body [:error :message]) "Unsupported protocol version")))))))
+
+(deftest integration-missing-body
+  (testing "POST with no body returns 400 with JSON-RPC error"
+    (fix/with-http-server
+      (fn [{:keys [port]}]
+        (let [resp @(http/post (url-for port)
+                               {:as :text
+                                :headers {"Content-Type" "application/json"}
+                                :body ""})
+              body (parse-json-body resp)]
+          (is (= 400 (:status resp)))
+          (is (= {:code -32700 :message "Parse error: request body is empty"}
+                 (:error body))))))))
+
+(deftest integration-invalid-session
+  (testing "POST with unknown session returns 400"
+    (fix/with-http-server
+      (fn [{:keys [port]}]
+        (let [resp @(http/post (url-for port)
+                               {:as :text
+                                :headers {"Content-Type" "application/json"
+                                          "MCP-Session-Id" "nonsense"}
+                                :body (json/generate-string
+                                       {:jsonrpc "2.0" :method "tools/list" :id 1})})
+              body (parse-json-body resp)]
+          (is (= 400 (:status resp)))
+          (is (= {:code -32600 :message "Invalid or missing MCP-Session-Id"}
+                 (:error body))))))))
+
+(deftest integration-health-check
+  (testing "GET /health returns 200 ok"
+    (fix/with-http-server
+      (fn [{:keys [port]}]
+        (let [resp @(http/get (url-for-health port) {:as :text})]
+          (is (= 200 (:status resp)))
+          (is (= "ok" (get (parse-json-body resp) :status))))))))

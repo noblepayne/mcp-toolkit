@@ -12,40 +12,37 @@
 |------|--------|
 | Name munging (URL encoding) | ✅ Done |
 | Structured logging hook | ✅ Done |
-| Request timeouts | 🔴 Not started |
+| Request timeouts | ✅ Done |
+| Graceful shutdown | ✅ Done |
+| Integration tests (real HTTP lifecycle) | ✅ Done |
+| Session TTL sweeper | ✅ Done |
+| Transport error body consistency | ✅ Done |
+| Content-Type enforcement | ✅ Done |
+| notifications/initialized state machine | ✅ Done |
+| Flake.nix (Nix distribution) | ✅ Done |
+| deps-lock.json (clj-nix lockfile) | ✅ Done |
 | SSE heartbeats | 🔵 Deferred (user doesn't use SSE) |
-| Integration tests | 🔴 Not started |
-| Graceful shutdown | 🔴 Not started |
-| Session TTL sweeper | 🟡 Auto-sweep exists, needs hookup |
-| Transport error body consistency | 🔴 Not started |
-| Content-Type enforcement | 🔴 Not started |
-| notifications/initialized state machine | 🔴 Not started |
-| Promise shim `allOf` semantics | 🔴 Verify once |
 | Registry | 🟢 Keep, stop enhancing |
 | Name munging verified | 🟢 Works on bb, verified |
 
 ---
 
-## Current Sprint: Production Readiness Basics
+## Current Sprint: Nix Distribution & Production Readiness
 
-### MUST FIX
+### DONE
 
-- [ ] **Name munging** — URL encoding instead of `__` separator in `impl/common.cljc`
-- [ ] **Structured logging hook** — `clojure.tools.logging` facade (works on bb), log at request boundaries
-- [ ] **Request timeouts** — configurable timeout on tool dispatch, return JSON-RPC error on timeout
-
-### SHOULD FIX
-
-- [ ] **Integration tests** — real http-kit server, real HTTP requests, full round-trip
-- [ ] **Graceful shutdown** — SIGTERM handler: stop accepting, drain in-flight, close SSE, stop server
-- [ ] **Session TTL sweeper** — wire up `prune-expired-sessions!` to background timer
-- [ ] **Transport error consistency** — align all transport errors to JSON-RPC format
-- [ ] **Content-Type enforcement** — require `application/json` on POST /mcp
-- [ ] **`notifications/initialized` state machine** — refuse methods before handshake complete
-
-### NICE
-
-- [ ] **Verify promise shim `allOf`** — check result collection matches promesa `p/all`
+- [x] **Name munging** — URL encoding instead of `__` separator in `impl/common.cljc`
+- [x] **Structured logging hook** — `clojure.tools.logging` facade (works on bb), log at request boundaries
+- [x] **Request timeouts** — configurable timeout on tool dispatch, return JSON-RPC error on timeout
+- [x] **Integration tests** — real http-kit server, real HTTP requests, full round-trip
+- [x] **Graceful shutdown** — SIGTERM handler: stop accepting, drain in-flight, close SSE, stop server
+- [x] **Session TTL sweeper** — wire up `prune-expired-sessions!` to background timer
+- [x] **Transport error consistency** — align all transport errors to JSON-RPC format
+- [x] **Content-Type enforcement** — require `application/json` on POST /mcp
+- [x] **`notifications/initialized` state machine** — refuse methods before handshake complete
+- [x] **Verify promise shim `allOf`** — check result collection matches promesa `p/all`
+- [x] **Flake.nix** — devShell + deps-lock package for Nix distribution
+- [x] **deps-lock.json** — 4281-entry clj-nix lockfile for reproducible builds
 
 ---
 
@@ -80,6 +77,27 @@
 - Fixed docstrings in `registry.cljc`
 - 80 JVM tests + 8 bb smoke tests: all pass
 - Trusted property: uses Clojure's own keyword serialization — `/` IS the language's canonical separator
+
+### 2026-06-15 — Production Readiness Sprint
+
+- **Request timeouts** — `:timeout` field on tool registration → `p/timeout` in tool-call-handler
+- **Graceful shutdown** — `addShutdownHook` in `run-server`, `shutdown-timeout` option, orderly drain
+- **Session TTL sweeper** — background daemon thread via `start-session-sweeper!`, configurable interval/ttl
+- **Transport error consistency** — all transport errors now `{:jsonrpc "2.0" :error {:code ... :message ...}}`
+- **Content-Type enforcement** — POST `/mcp` rejects non-`application/json` with 415
+- **Integration tests** — 7 real http-kit server lifecycle tests (full lifecycle, terminated rejection, content-type, bad version, missing body, invalid session, health)
+- **Lint/format** — 0 errors, 0 warnings; cljfmt applied
+- **CLJS verified** — promise shim + core protocol files are `.cljc`; only transport is `.clj`
+- **mcp-clojure-sdk spec review** — confirmed: no gaps, our implementation correct on cancellation/progress/version
+- **87 JVM + 8 bb = 95 tests passing**
+
+### 2026-06-15 — Nix Distribution
+
+- **flake.nix** — devShell (jdk21, clojure, babashka, clj-kondo, cljfmt, jet) + `deps-lock` package
+- **deps-lock.json** — generated via `nix run github:jlesquembre/clj-nix#deps-lock`, 4281 entries
+- **flake.lock** — pinned nixpkgs, clj-nix, flake-utils
+- `nix flake check` validates: formatter, packages.deps-lock, devShells.default all green
+- Tagged: `v0.2.2`
 
 ### 2026-06-15 — Design Reviews
 

@@ -234,7 +234,7 @@
                 (let [r (reg/create)
                       plugins (mapv (fn [i]
                                       (make-plugin :name (keyword (str "p" i))
-                                                   :tools [(make-tool :name (keyword (str "p" i) (str "t")))]))
+                                                   :tools [(make-tool :name (keyword (str "p" i) "t"))]))
                                     (range n))]
                   (try
                     (reduce reg/register! r plugins)
@@ -247,7 +247,7 @@
                 (let [r (reg/create)
                       plugins (mapv (fn [i]
                                       (make-plugin :name (keyword (str "p" i))
-                                                   :tools [(make-tool :name (keyword (str "p" i) (str "t")))]))
+                                                   :tools [(make-tool :name (keyword (str "p" i) "t"))]))
                                     (range n))]
                   (try
                     (reduce reg/register! r plugins)

@@ -1,5 +1,5 @@
 (ns mcp-toolkit.core-test
-  (:require [clojure.test :refer [deftest testing is are #?(:cljs async)]]
+  (:require [clojure.test :refer [deftest testing is #?(:cljs async)]]
             [mcp-toolkit.json-rpc :as json-rpc]
             [mcp-toolkit.client :as client]
             [mcp-toolkit.server :as server]
