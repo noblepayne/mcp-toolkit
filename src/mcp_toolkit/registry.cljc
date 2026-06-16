@@ -24,7 +24,7 @@
   "A tool bundles its schema and handler together.
    Names are namespaced keywords: :art19/list-episodes.
    At the MCP protocol boundary these are munged to strings:
-   \"art19__list_episodes\"."
+   \"art19/list-episodes\"."
   [:map {:closed true}
    [:name :keyword]                              ;; :art19/list-episodes
    [:description :string]
@@ -278,7 +278,7 @@
 
 (defn all-tools-for-protocol
   "Return tools formatted for the MCP protocol boundary.
-   Tool names are munged to strings: :art19/list-episodes → \"art19__list_episodes\".
+    Tool names are munged to strings: :art19/list-episodes → \"art19/list-episodes\".
    Only includes :name, :description, :inputSchema (not :handler)."
   [registry munge-fn]
   (let [munge (or munge-fn str)]

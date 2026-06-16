@@ -20,7 +20,56 @@
      (http/run-server handler {:port 3000})"
   (:require [clojure.string :as str]
             [org.httpkit.server :as http]
-            [cheshire.core :as json]))
+            [cheshire.core :as json])
+  (:import [java.time Instant]))
+
+;; ─── Logging ────────────────────────────────────────────────────────────────
+
+(def ^:dynamic *request-id*
+  "Correlation ID for the current request. Bound by the handler wrapper."
+  nil)
+
+(def ^:dynamic *log-fn*
+  "Overrideable logging function. Called as (fn [level event data]).
+   Default: structured JSON println to stderr."
+  nil)
+
+(defn- log-event
+  "Log a structured event. Thread-safe, no dependencies beyond json."
+  [level event data]
+  (let [default-fn (fn [level event data]
+                     (binding [*out* *err*]
+                       (println (json/generate-string
+                                 (merge {:timestamp (str (Instant/now))
+                                         :level level
+                                         :event event}
+                                        data)))))]
+    ((or *log-fn* default-fn) level event data)))
+
+(defn- with-request-logging
+  "Middleware: log request lifecycle (received, completed, error)."
+  [handler-fn request]
+  (let [req-id (str (java.util.UUID/randomUUID))
+        http-method (:request-method request)
+        uri (:uri request)
+        start-ms (System/currentTimeMillis)]
+    (binding [*request-id* req-id]
+      (log-event "info" "request-received"
+                 {:request-id req-id :http-method http-method :uri uri})
+      (try
+        (let [response (handler-fn request)]
+          (log-event "info" "request-completed"
+                     {:request-id req-id :http-method http-method :uri uri
+                      :status (:status response)
+                      :duration-ms (- (System/currentTimeMillis) start-ms)})
+          response)
+        (catch Throwable t
+          (log-event "error" "request-error"
+                     {:request-id req-id :http-method http-method :uri uri
+                      :error (.getMessage t)
+                      :error-class (.getName (class t))
+                      :duration-ms (- (System/currentTimeMillis) start-ms)})
+          (throw t))))))
 
 ;; ─── Protocol Version ───────────────────────────────────────────────────────
 
@@ -377,26 +426,29 @@
                    :or {session-store (create-session-store)
                         allowed-origins []}}]]
   (fn [request]
-    (let [uri (:uri request)]
-      (cond
-        (or (= uri "/mcp") (= uri "/mcp/"))
-        (case (:request-method request)
-          :post (handle-post request dispatch-fn session-store allowed-origins)
-          :get (handle-get request session-store allowed-origins)
-          :delete (handle-delete request session-store)
-          {:status 405
-           :headers {"Content-Type" "text/plain"}
-           :body "Method Not Allowed"})
+    (with-request-logging
+      (fn [req]
+        (let [uri (:uri req)]
+          (cond
+            (or (= uri "/mcp") (= uri "/mcp/"))
+            (case (:request-method req)
+              :post (handle-post req dispatch-fn session-store allowed-origins)
+              :get (handle-get req session-store allowed-origins)
+              :delete (handle-delete req session-store)
+              {:status 405
+               :headers {"Content-Type" "text/plain"}
+               :body "Method Not Allowed"})
 
-        (= uri "/health")
-        {:status 200
-         :headers {"Content-Type" "application/json"}
-         :body (json/generate-string {:status "ok"})}
+            (= uri "/health")
+            {:status 200
+             :headers {"Content-Type" "application/json"}
+             :body (json/generate-string {:status "ok"})}
 
-        :else
-        {:status 404
-         :headers {"Content-Type" "text/plain"}
-         :body "Not Found"}))))
+            :else
+            {:status 404
+             :headers {"Content-Type" "text/plain"}
+             :body "Not Found"})))
+      request)))
 
 (defn run-server
   "Start an MCP server with Streamable HTTP transport.

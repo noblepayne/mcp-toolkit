@@ -49,6 +49,49 @@
 
 ## Dev Log
 
+### Session: 2026-06-15 — Fork Strategy, bb Verification, Merge to main v0.2.0
+
+| Commit | What | Why |
+|--------|------|-----|
+| `da1f2e1` | Merge `feat/streamablehttp` → `main` (24 commits) | Own the fork, tag v0.2.0 |
+| `66995af..5043fd9` | 24 commits from feat/streamablehttp branch | Streamable HTTP + registry + bb shim + tests |
+
+**Fork Strategy Decision**
+- The fork is the primary development target. Own it.
+- Two speeds: contribute upstream at user's speed (hand-verified quality PRs), operate at agent speed for user's infrastructure.
+- Upstream maintainer closed PRs #16/#17 with `too-much-ai` label; "typed by human" policy. No upstream PRs in flight.
+- `feat/upstream-shim` branch created later for potential upstream contributions (promise shim + bug fixes only).
+
+**Registry Is Optional**
+- Handler supports dual dispatch: registry mode (via `registry/find-tool`) and legacy mode (via `:tool-by-name` map in session).
+- Individual bb servers use legacy mode — pass `{:tools [{:name ... :tool-fn ...}]}` to `create-session`.
+- Registry is for the "unified server" use case (Phase 5+): multiple plugins in one process, namespaced tool names, collision detection.
+- Decision: keep registry, don't remove it, don't let it complicate the simple path.
+
+**Streamable HTTP Verified on Babashka**
+- `streamable_http.clj` loads clean on bb — no changes needed. bb has http-kit and cheshire built in.
+- Full 8-test smoke suite passes on bb: initialize, tools/list, tools/call, DELETE, terminated rejection, health check, missing session, bad protocol version.
+- The `.clj` extension does not block bb; bb loads `.clj` files fine.
+- Key finding: http-kit client returns headers as keyword keys (`:mcp-session-id`), not strings. This is client-side behavior, not a server issue.
+
+**Test Results at v0.2.0**
+- 80 JVM tests (kaocha), 139 assertions, 0 failures
+- 8 bb smoke tests (`bb test/mcp_toolkit/smoke_test.bb`), 0 failures
+- Total: 88 tests across both runtimes
+
+**Architecture Notes**
+- The upstream core (json_rpc.cljc, server.cljc, handler.cljc) is ~600 lines worth keeping.
+- Fork delta over upstream: +3996/-203 lines across 21 files.
+- New files: transport (417 lines), promise shim (141 lines), registry (448 lines, optional), tests, bb.edn.
+- Modified upstream files: client.cljc (bug fix), handler.cljc (bug fix), server.cljc (registry wiring, protocol versions).
+- The bb smoke test file (`test/mcp_toolkit/smoke_test.bb`) is the reference pattern for verifying bb compatibility.
+
+**Next Priorities**
+1. Create `feats/upstream-shim` branch (promise shim + bug fixes only, clean history)
+2. Migrate pinboard-mcp as proof of concept (replaces ~200 lines boilerplate with ~20 lines config)
+3. Add datom MCP adapter (thin wrapper over 7 core primitives)
+4. Consider extracting a minimal "server starter" helper for bb servers
+
 ### Session: 2026-04-04 — Phase 3 Shim, Bug Fixes, Consultant Review
 
 | Commit | What | Why |

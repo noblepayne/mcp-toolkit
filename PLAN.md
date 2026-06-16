@@ -1461,12 +1461,14 @@ Governance/PII/audit tools are split into two plugins:
 
 This eliminates the privilege escalation vector of exposing sensitive tools to all connected agents.
 
-### Fork vs PR Strategy
+### Fork Strategy (2026-06-15 Update)
 
-1. PR to metosin first (shim is additive, non-breaking)
-2. If not merged in 2 weeks, fork
-3. Fork tracks upstream main, rebases our changes on top
-4. Registry and transport are additive — unlikely to conflict
+The fork is the primary development target. The earlier "PR first, then fork" plan is obsolete — both PRs #16 and #17 were closed. New strategy:
+
+1. **Two speeds**: contribute upstream at user's speed (hand-verified, clean commits), operate at agent speed on the fork
+2. **`feats/upstream-shim` branch** exists but is not merged to `main` — clean cherry-pick of promise shim + bug fixes if upstream ever thaws
+3. **Fork owns itself**: `main` is the release branch, tagged v0.2.0
+4. **Registry is optional**: handler supports dual dispatch (registry mode via `registry/find-tool`, legacy mode via `:tool-by-name` map). The registry exists for unified-server composition (Phase 5+), not needed for individual bb servers.
 
 ---
 
@@ -1477,66 +1479,82 @@ This eliminates the privilege escalation vector of exposing sensitive tools to a
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 1: Registry | ✅ Complete | Plugin registry, O(1) index, collision detection, Malli validation |
-| Phase 2: Streamable HTTP | ⚠️ Partially spec-compliant | POST works, GET/SSE is skeleton (no message push), DELETE works |
-| Phase 2.5: Spec Gaps + Bug Fixes | 🟢 Done | 3 critical bugs fixed, SSE gap documented, protocol mismatch identified |
-| Phase 3: Promise Shim + Babashka | 🟢 Complete | `impl/promise.cljc` ships, 73 tests pass, bb verified |
+| Phase 1: Registry | ✅ Complete | Plugin registry, O(1) index, collision detection, Malli validation. **Optional** — handler has legacy mode too. |
+| Phase 2: Streamable HTTP | ✅ Complete (with SSE) | POST/GET/DELETE, SSE message push, session pruning, origin validation, 2025-11-25 spec. Verified on JVM AND bb. |
+| Phase 2.5: Spec Gaps + Bug Fixes | 🟢 Done | 3 critical bugs fixed, protocol version alignment, SSE delivery working |
+| Phase 3: Promise Shim + Babashka | 🟢 Complete + Verified | `impl/promise.cljc` ships, 80 JVM tests + 8 bb smoke tests pass (88 total). `streamable_http.clj` loads clean on bb. |
 | Phase 4: Squint | ⏳ Future | Adding `:squint` branch to shim, trivial once shim exists |
-| Phase 5: Plugin Migration | 🔵 Next priority | Pinboard-mcp → proof of concept (463 lines, smallest) |
+| Phase 5: Plugin Migration | 🔵 Next priority | Pinboard-mcp → proof of concept (463 lines, 50% boilerplate, smallest) |
 | Phase 6: mcp-injector Integration | ⏳ Future | Multipliers on zero are zero — need one working plugin first |
 
-### Consultant's Strategic Recommendations
+### Consultant's Legacy Recommendations (from April session)
 
-1. **Fix SSE before claiming spec-compliance** — GET endpoint opens channel but never pushes messages. Half of Streamable HTTP is unimplemented.
-2. **Convert pinboard-mcp next** — the highest-impact work. Validates shim on real bb, exposes registry gaps, proves the architecture end-to-end. "Every hour on pinboard-mcp is worth 3 hours on theoretical design."
-3. **Open shim PR to metosin first** — small, non-breaking, solves real problem. Reduces fork delta if accepted.
+_These were from the 3-agent review. Some are now done, some still apply:_
+
+1. ~~Fix SSE message delivery~~ — ✅ Done. Per-session queue, notification push, drain to SSE stream. GET `/mcp` streams.
+2. ~~Align protocol versions~~ — ✅ Done. `server.cljc` includes `"2025-11-25"`.
+3. **Convert pinboard-mcp next** — Still the highest-impact work. Validates the library on a real bb server, proves the architecture end-to-end. "Every hour on pinboard-mcp is worth 3 hours on theoretical design."
 4. **Don't optimize for Phase 4-6 before Phase 5** — Squint, mcp-injector, observability are all multipliers. Multipliers on zero (no migrated plugins) are zero.
-5. **Keep the fork minimal** — shim + registry + transport. Nothing more. Upstream anything you can.
 
 ### Immediate Next Sprint
 
-1. **Fix SSE message delivery** — per-session queue, notification push, drain to SSE stream. Make GET `/mcp` actually stream.
-2. **Align protocol versions** — `server.cljc` should support what `streamable_http.clj` advertises (include `"2025-11-25"`)
+1. **Create `feats/upstream-shim`** — cherry-pick promise shim commits + bug fixes from `feat/streamablehttp` history into clean branch, ready for upstream if/when
+2. **Migrate pinboard-mcp** — replaces ~200 lines boilerplate with ~20 lines config. Validates the whole stack on bb.
+3. **Add datom MCP adapter** — thin wrapper over 7 core primitives (search, answer, context, graph_expand, lookup, ingest, stats)
 3. **Migrate pinboard-mcp** — smallest server, proof of concept. Validate everything end-to-end.
 
-### Short-term (After SSE + Pinboard)
+### Immediate Next (v0.2.1)
 
-4. **Add example project** — `example/` with working bb.edn, server, plugin
-5. **Migrate art19-mcp** — ~1100 lines, biggest win (deletes transport boilerplate)
-6. **Migrate podhome-mcp** — follows art19 pattern, ~2 hours
-7. **End-to-end integration test** — start HTTP server, connect real client, call tool through plugins
+4. **Create `feats/upstream-shim`** — cherry-pick promise shim + bug fixes from `feat/streamablehttp` history into clean branch
+5. **Migrate pinboard-mcp** — smallest server (~463 lines, 50% boilerplate). Target: server reduces from ~200 lines boilerplate to ~20 lines config. Proof of concept.
+6. **Add datom MCP adapter** — thin wrapper over 7 core primitives: search, answer, context, graph_expand, lookup, ingest, stats. Clojure JVM.
+
+### Short-term (After Pinboard Migration)
+
+7. **Extract "server starter" helper** — `defmcp server` macro or helper, reduces `create-session` + `create-handler` + `run-server` to one call
+8. **Migrate art19-mcp** — ~1100 lines, biggest win (deletes transport boilerplate)
+9. **Migrate podhome-mcp** — follows art19 pattern, ~2 hours
+10. **End-to-end integration test** — start HTTP server, connect real client, call tool through mcp-toolkit
 
 ### Medium-term
 
-8. **Migrate searxng-mcp** — plugin + standalone
-9. **Open shim PR to metosin** — if merged, fork delta shrinks significantly
-10. **Add mcp-injector plugin mode** — in-process loading
-11. **Pagination cursors** — tools/prompts/resources list handlers have `#_#_:nextCursor` commented out
+11. **Migrate searxng-mcp** — plugin + standalone
+12. **Add mcp-injector plugin mode** — in-process loading
+13. **Pagination cursors** — tools/prompts/resources list handlers have `#_#_:nextCursor` commented out
 
 ### Long-term
 
-12. **Squint support** — `:squint` branch in shim, `js/Promise` backend
-13. **mcp-injector as MCP server** — split admin/standard plugins
-14. **Unified server** — load all plugins, one endpoint
-15. **Token bloat mitigation** — tool groups, filtered `tools/list`
-16. **Cross-plugin tool calling** — dependency validation, context passing
-17. **Observability** — structured logging, metrics hooks
+14. **Squint support** — `:squint` branch in shim, `js/Promise` backend
+15. **mcp-injector as MCP server** — split admin/standard plugins
+16. **Unified server** — load all plugins, one endpoint
+17. **Token bloat mitigation** — tool groups, filtered `tools/list`
+18. **Cross-plugin tool calling** — dependency validation, context passing
+19. **Observability** — structured logging, metrics hooks
+
+### Fork Strategy (Decided 2026-06-15)
+
+**The fork is the primary development target.** Two speeds:
+- **User speed**: Hand-verified, clean-history PRs to upstream when warranted
+- **Agent speed**: Full steam ahead on the fork for the user's infra
+
+Upstream maintainer closed PRs #16/#17 with `too-much-ai` label. The `feat/upstream-shim` branch exists as a clean commit sequence (promise shim + bug fixes only) ready to PR if the maintainer ever thaws. In the meantime, the fork owns itself.
+
+**Key rule**: upstream-facing changes are additive. New namespaces (transport, registry, promise shim) don't touch upstream files. Bug fixes to upstream files are trivial one-liners that are easy to cherry-pick.
 
 ### Branch Strategy
 
 | Branch | Purpose | Merge Target |
 |--------|---------|-------------|
-| `main` | Fork baseline (metosin upstream + registry + transport) | — |
-| `feat/streamablehttp` | Current work branch (Phase 1-3, bug fixes) | → `main` when clean |
-| `feat/sse-fix` | SSE message delivery implementation | → `feat/streamablehttp` or → `main` |
-| `feat/pinboard-migration` | Pinboard as first plugin | → `feat/streamablehttp` or → `example/` |
-| `feat/upstream-shim` | Promise shim PR candidate for metosin | → metosin/mcp-toolkit |
+| `main` | Fork release branch (owns all additions) | — |
+| `feat/streamablehttp` | Archived — all 24 commits merged to `main` | ✅ → `main` (done v0.2.0) |
+| `feat/pinboard-migration` | Pinboard as first proof-of-concept migration | → `main` |
+| `feats/upstream-shim` | Promise shim + bug fixes only, clean history | → metosin/mcp-toolkit (maybe never) |
 
 **Merge checkpoints:**
-- ✅ Promise shim + bug fixes → ready to cut snapshot tag `v0.2.0`
-- ⏳ SSE fix → tag `v0.3.0` (first true spec-compliant release)
-- ⏳ Pinboard migration → `example/` directory with working plugin
-- ⏳ First end-to-end test → confidence milestone, ready for v0.4.0
+- ✅ `feat/streamablehttp` → `main`, tagged `v0.2.0` (80 JVM tests + 8 bb smoke tests)
+- ⏳ Pinboard migration → `example/` with working server using mcp-toolkit
+- ⏳ Datom MCP adapter → thin wrapper over search/answer/context/graph_expand/lookup/ingest/stats
+- ⏳ `feats/upstream-shim` → extract clean commits from streamablehttp history
 
 ---
 ---
@@ -1637,5 +1655,5 @@ These should be structurally guaranteed by the data model:
 
 ---
 
-_Plan updated: 2026-04-04_
+_Plan updated: 2026-06-15 — Fork strategy set, v0.2.0 released, bb verified_
 _Related: vamp, art19-mcp, podhome-mcp, pinboard-mcp, searxng-mcp, mcp-injector, mcp-toolkit-squint-compat-spec.md_

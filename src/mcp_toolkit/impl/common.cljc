@@ -8,21 +8,23 @@
 
 (defn munge-name
   "Convert a namespaced keyword to an MCP protocol string.
-   :art19/list-episodes → \"art19__list_episodes\"
+   :art19/list-episodes → \"art19/list-episodes\"
 
-   Non-namespaced keywords are returned as-is (string form)."
+   Uses the keyword's own namespace/name split (via Clojure's
+   canonical representation) — no lossy encoding needed."
   [k]
-  (if (namespace k)
-    (str (namespace k) "__" (name k))
+  (if-let [ns (namespace k)]
+    (str ns "/" (name k))
     (name k)))
 
 (defn unmunge-name
   "Convert an MCP protocol string to a namespaced keyword.
-   \"art19__list_episodes\" → :art19/list-episodes
+   \"art19/list-episodes\" → :art19/list-episodes
 
-   Strings without '__' become non-namespaced keywords."
+   Strings without '/' become non-namespaced keywords.
+   Uses Clojure's own keyword parsing — no lossy decoding needed."
   [s]
-  (if (str/includes? s "__")
-    (let [[ns name] (str/split s #"__" 2)]
-      (keyword ns name))
+  (if (str/includes? s "/")
+    (let [pos (str/index-of s "/")]
+      (keyword (subs s 0 pos) (subs s (inc pos))))
     (keyword s)))
