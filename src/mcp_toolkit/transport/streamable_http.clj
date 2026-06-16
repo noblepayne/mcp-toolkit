@@ -396,7 +396,10 @@
 (defn- handle-get
   "Handle GET /mcp — server→client SSE stream.
 
-   Opens an SSE stream for server-initiated messages.
+   Returns 405 Method Not Allowed if no MCP-Session-Id is provided
+   (this server does not offer SSE for sessions that don't exist yet).
+
+   Otherwise opens an SSE stream for server-initiated messages.
    Registers the channel in the session-store so push-notification!
    can send to it. Drains any pending messages on connect."
   [request session-store allowed-origins]
@@ -408,10 +411,10 @@
     (let [session-id (find-header request "MCP-Session-Id")]
       (cond
         (nil? session-id)
-        (json-response 400
-                       {:jsonrpc "2.0"
-                        :error {:code -32600
-                                :message "MCP-Session-Id header required for SSE stream"}})
+        ;; Per spec: GET /mcp MUST return SSE stream or 405 Method Not Allowed
+        {:status 405
+         :headers {"Content-Type" "text/plain"}
+         :body "Method Not Allowed"}
 
         (terminated-session? session-store session-id)
         (json-response 404

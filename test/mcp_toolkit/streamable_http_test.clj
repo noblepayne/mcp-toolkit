@@ -151,10 +151,10 @@
 ;; ─── GET /mcp Tests ─────────────────────────────────────────────────────
 
 (deftest get-without-session-id
-  (testing "GET without session-id returns 400"
+  (testing "GET /mcp without session-id returns 405 (not 400)"
     (let [handler (transport/create-handler (fn [_ _] nil))
           resp (fix/get-request handler "/mcp")]
-      (is (= 400 (:status resp))))))
+      (is (= 405 (:status resp))))))
 
 (deftest get-with-invalid-session
   (testing "GET with invalid session returns 404"
@@ -480,3 +480,10 @@
         (let [resp @(http/get (url-for-health port) {:as :text})]
           (is (= 200 (:status resp)))
           (is (= "ok" (get (parse-json-body resp) :status))))))))
+
+(deftest integration-get-mcp-returns-405
+  (testing "GET /mcp without session returns 405 (not 400)"
+    (fix/with-http-server
+      (fn [{:keys [port]}]
+        (let [resp @(http/get (url-for port) {:as :text})]
+          (is (= 405 (:status resp))))))))
