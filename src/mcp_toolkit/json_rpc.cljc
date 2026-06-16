@@ -1,5 +1,5 @@
 (ns mcp-toolkit.json-rpc
-  (:require [promesa.core :as p]))
+  (:require [mcp-toolkit.impl.promise :as p]))
 
 ;;
 ;; https://www.jsonrpc.org/specification
@@ -81,7 +81,6 @@
    (-> (notification topic)
        (assoc :params params))))
 
-
 ;;
 ;;
 ;;
@@ -97,23 +96,23 @@
 
    Returns:
      A promise that resolves to the method result or rejects with the error."
-  [context {:keys [method params] :as message}]
+  [context {:keys [_method _params] :as message}]
   (let [{:keys [session send-message]} context
         ;; Picks a unique method id for a remote call. Robust to concurrent calls.
         ;; TODO: ensure it loops when reaching the maximum integer value.
         called-method-id (-> (swap! session update :last-called-method-id inc)
                              :last-called-method-id)]
     (p/create
-      (fn [resolve reject]
-        (let [response-handler (fn [{:keys [session message]}]
-                                 (swap! session update :handler-by-called-method-id dissoc called-method-id)
-                                 (if (contains? message :error)
-                                   (reject (ex-info "error" (:error message)))
-                                   (resolve (:result message))))]
-          (swap! session update :handler-by-called-method-id assoc called-method-id response-handler)
-          (send-message (-> message
-                            (assoc :jsonrpc "2.0"
-                                   :id called-method-id))))))))
+     (fn [resolve reject]
+       (let [response-handler (fn [{:keys [session message]}]
+                                (swap! session update :handler-by-called-method-id dissoc called-method-id)
+                                (if (contains? message :error)
+                                  (reject (ex-info "error" (:error message)))
+                                  (resolve (:result message))))]
+         (swap! session update :handler-by-called-method-id assoc called-method-id response-handler)
+         (send-message (-> message
+                           (assoc :jsonrpc "2.0"
+                                  :id called-method-id))))))))
 
 (defn send-message
   "Sends a message using the context's send-message function.
@@ -167,9 +166,34 @@
                             ;; Clean up, side effect
                             (swap! session update :is-cancelled-by-request-id dissoc id)
 
-                            ;; Pass through as if this p/handle was not there.
-                            ;; We avoided using p/finally because it does not allow chaining further promises.
-                            (or error result))))))))
+                            (cond
+                              @is-cancelled
+                              nil
+
+                              ;; error came from handler — build JSON-RPC error response
+                              error
+                              (if-let [data (ex-data error)]
+                                (if (:json-rpc-error data)
+                                  {:jsonrpc "2.0"
+                                   :error {:code (:code data -32000)
+                                           :message (:message data "Internal error")
+                                           :data (:data data)}
+                                   :id id}
+                                  ;; generic handler exception — internal error
+                                  {:jsonrpc "2.0"
+                                   :error {:code -32603
+                                           :message (.getMessage error)
+                                           :data {:type #?(:clj (str (class error)) :cljs (type error))}}
+                                   :id id})
+                                ;; exception has no data — internal error
+                                {:jsonrpc "2.0"
+                                 :error {:code -32603
+                                         :message (.getMessage error)
+                                         :data {:type #?(:clj (str (class error)) :cljs (type error))}}
+                                 :id id})
+
+                              ;; pass through result
+                              :else result))))))))
     ;; Method call response
     (if (and (contains? message :id)
              (or (contains? message :result)
@@ -179,9 +203,9 @@
           (handler context)
           nil)
         ;; TODO: handle the case where the id is unknown to us.
-        ,)
+        nil)
       ;; TODO: handle the message's structural problem.
-      ,)))
+      nil)))
 
 (defn handle-message
   "Handles incoming JSON-RPC messages, supporting both single messages and batch requests.

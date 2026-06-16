@@ -1,9 +1,10 @@
 (ns ^:no-doc mcp-toolkit.impl.server.handler
   (:require [mcp-toolkit.json-rpc :as json-rpc]
-            [mcp-toolkit.impl.common :refer [user-callback]]
-            [promesa.core :as p]))
+            [mcp-toolkit.impl.common :refer [user-callback unmunge-name]]
+            [mcp-toolkit.registry :as registry]
+            [mcp-toolkit.impl.promise :as p]))
 
-(defn ping-handler [context]
+(defn ping-handler [_]
   {})
 
 (defn set-logging-level-handler [{:keys [session message]}]
@@ -26,8 +27,7 @@
   {:prompts (-> @session :prompt-by-name vals
                 (->> (mapv (fn [prompt]
                              (select-keys prompt [:name :description :arguments])))))
-   #_#_
-   :nextCursor "next-page-cursor"})
+   #_#_:nextCursor "next-page-cursor"})
 
 (defn prompt-get-handler [{:keys [session message] :as context}]
   (let [{:keys [name arguments]} (:params message)]
@@ -39,15 +39,17 @@
   {:resources (-> @session :resource-by-uri vals
                   (->> (mapv (fn [resource]
                                (select-keys resource [:uri :name :description :mimeType])))))
-   #_#_
-   :nextCursor "next-page-cursor"})
+   #_#_:nextCursor "next-page-cursor"})
 
 (defn resource-read-handler [{:keys [session message]}]
   (let [{:keys [uri]} (:params message)]
     (if-some [resource (-> @session :resource-by-uri (get uri))]
-      {:contents [(select-keys resource [:uri :description :mimeType :text :blob])]} ; either text or blob
-      ;; FIXME: this is wrong because it will be interpreted as result data
-      (json-rpc/resource-not-found (:id message) uri))))
+      {:contents [(select-keys resource [:uri :description :mimeType :text :blob])]}
+      (throw (ex-info "Resource not found"
+                      {:json-rpc-error true
+                       :code -32002
+                       :message "Resource not found"
+                       :data {:uri uri}})))))
 
 (defn resource-templates-list-handler [{:keys [session]}]
   {:resourceTemplates (-> @session :resource-templates (or []))})
@@ -66,47 +68,58 @@
   {:tools (-> @session :tool-by-name vals
               (->> (mapv (fn [tool]
                            (select-keys tool [:name :description :inputSchema])))))
-   #_#_
-   :nextCursor "next-page-cursor"})
+   #_#_:nextCursor "next-page-cursor"})
 
 (defn tool-call-handler [{:keys [session message] :as context}]
-  (let [{:keys [name arguments]} (:params message)]
-    (if-some [tool-fn (-> @session :tool-by-name (get name) :tool-fn)]
-      (-> (tool-fn context arguments)
-          (p/catch (fn [exception]
-                     {:content [{:type "text"
-                                 :text (ex-message exception)}]
-                      :isError true})))
-      ;; FIXME: this is wrong because it will be interpreted as result data
-      (json-rpc/invalid-tool-name (:id message) name))))
+  (let [{:keys [name arguments]} (:params message)
+        reg-ref (:registry @session)]
+    (if reg-ref
+      ;; Registry mode: unmunge name, O(1) lookup via index
+      (let [tool-name (unmunge-name name)]
+        (if-some [{:keys [handler timeout]} (registry/find-tool reg-ref tool-name)]
+          (-> (if timeout
+                (p/timeout (handler context arguments) timeout)
+                (handler context arguments))
+              (p/catch (fn [exception]
+                         {:content [{:type "text"
+                                     :text (ex-message exception)}]
+                          :isError true})))
+          (json-rpc/invalid-tool-name (:id message) name)))
+      ;; Legacy mode: look up in session's tool-by-name map
+      (if-some [tool-fn (-> @session :tool-by-name (get name) :tool-fn)]
+        (-> (tool-fn context arguments)
+            (p/catch (fn [exception]
+                       {:content [{:type "text"
+                                   :text (ex-message exception)}]
+                        :isError true})))
+        (json-rpc/invalid-tool-name (:id message) name)))))
 
 (defn cancelled-notification-handler [{:keys [session message]}]
   (when-some [is-cancelled-atom (-> @session :is-cancelled-by-request-id (get (-> message :params :requestId)))]
     (reset! is-cancelled-atom true)))
 
 (def handler-by-method-post-initialization
-  {"ping"                             ping-handler
-   "logging/setLevel"                 set-logging-level-handler
-   "completion/complete"              completion-complete-handler
-   "prompts/list"                     prompt-list-handler
-   "prompts/get"                      prompt-get-handler
-   "resources/list"                   resource-list-handler
-   "resources/read"                   resource-read-handler
-   "resources/templates/list"         resource-templates-list-handler
-   "resources/subscribe"              resource-subscribe-handler
-   "resources/unsubscribe"            resource-unsubscribe-handler
-   "tools/list"                       tool-list-handler
-   "tools/call"                       tool-call-handler
-   "notifications/cancelled"          cancelled-notification-handler
+  {"ping" ping-handler
+   "logging/setLevel" set-logging-level-handler
+   "completion/complete" completion-complete-handler
+   "prompts/list" prompt-list-handler
+   "prompts/get" prompt-get-handler
+   "resources/list" resource-list-handler
+   "resources/read" resource-read-handler
+   "resources/templates/list" resource-templates-list-handler
+   "resources/subscribe" resource-subscribe-handler
+   "resources/unsubscribe" resource-unsubscribe-handler
+   "tools/list" tool-list-handler
+   "tools/call" tool-call-handler
+   "notifications/cancelled" cancelled-notification-handler
    "notifications/roots/list_changed" (user-callback :on-client-root-list-changed)})
-
 
 ;; Initialization phase, a handshake where protocol versions are tentatively agreed.
 
 (defn initialize-handler [{:keys [session message]}]
   (let [{client-protocol-version :protocolVersion
-         client-info             :clientInfo
-         client-capabilities     :capabilities} (:params message)
+         client-info :clientInfo
+         client-capabilities :capabilities} (:params message)
         {:keys [server-info
                 server-supported-protocol-versions
                 server-instructions]} @session
@@ -118,12 +131,12 @@
            :client-info client-info
            :client-capabilities client-capabilities)
     (-> {:protocolVersion protocol-version
-         :capabilities {:logging     {}
+         :capabilities {:logging {}
                         :completions {}
-                        :prompts     {:listChanged true}
-                        :resources   {:subscribe   true
-                                      :listChanged true}
-                        :tools       {:listChanged true}}
+                        :prompts {:listChanged true}
+                        :resources {:subscribe true
+                                    :listChanged true}
+                        :tools {:listChanged true}}
          :serverInfo server-info}
         (cond-> (some? server-instructions) (assoc :instructions server-instructions)))))
 
@@ -134,6 +147,6 @@
   ((user-callback :on-initialized) context))
 
 (def handler-by-method-pre-initialization
-  {"ping"                      ping-handler
-   "initialize"                initialize-handler
+  {"ping" ping-handler
+   "initialize" initialize-handler
    "notifications/initialized" initialized-notification-handler})
