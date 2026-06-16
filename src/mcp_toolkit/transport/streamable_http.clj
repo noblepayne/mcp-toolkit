@@ -20,31 +20,10 @@
      (http/run-server handler {:port 3000})"
   (:require [clojure.string :as str]
             [org.httpkit.server :as http]
-            [cheshire.core :as json])
-  (:import [java.time Instant]))
+            [cheshire.core :as json]
+            [mcp-toolkit.impl.logging :as log]))
 
 ;; ─── Logging ────────────────────────────────────────────────────────────────
-
-(def ^:dynamic *request-id*
-  "Correlation ID for the current request. Bound by the handler wrapper."
-  nil)
-
-(def ^:dynamic *log-fn*
-  "Overrideable logging function. Called as (fn [level event data]).
-   Default: structured JSON println to stderr."
-  nil)
-
-(defn- log-event
-  "Log a structured event. Thread-safe, no dependencies beyond json."
-  [level event data]
-  (let [default-fn (fn [level event data]
-                     (binding [*out* *err*]
-                       (println (json/generate-string
-                                 (merge {:timestamp (str (Instant/now))
-                                         :level level
-                                         :event event}
-                                        data)))))]
-    ((or *log-fn* default-fn) level event data)))
 
 (defn- with-request-logging
   "Middleware: log request lifecycle (received, completed, error)."
@@ -52,23 +31,23 @@
   (let [req-id (str (java.util.UUID/randomUUID))
         http-method (:request-method request)
         uri (:uri request)
+        base {:request-id req-id :http-method http-method :uri uri}
         start-ms (System/currentTimeMillis)]
-    (binding [*request-id* req-id]
-      (log-event "info" "request-received"
-                 {:request-id req-id :http-method http-method :uri uri})
+    (binding [log/*request-id* req-id]
+      (log/log-event "info" "request-received" base)
       (try
         (let [response (handler-fn request)]
-          (log-event "info" "request-completed"
-                     {:request-id req-id :http-method http-method :uri uri
-                      :status (:status response)
-                      :duration-ms (- (System/currentTimeMillis) start-ms)})
+          (log/log-event "info" "request-completed"
+                         (assoc base
+                                :status (:status response)
+                                :duration-ms (- (System/currentTimeMillis) start-ms)))
           response)
         (catch Throwable t
-          (log-event "error" "request-error"
-                     {:request-id req-id :http-method http-method :uri uri
-                      :error (.getMessage t)
-                      :error-class (.getName (class t))
-                      :duration-ms (- (System/currentTimeMillis) start-ms)})
+          (log/log-event "error" "request-error"
+                         (assoc base
+                                :error (.getMessage t)
+                                :error-class (.getName (class t))
+                                :duration-ms (- (System/currentTimeMillis) start-ms)))
           (throw t))))))
 
 ;; ─── Protocol Version ───────────────────────────────────────────────────────
@@ -260,9 +239,7 @@
                          (catch InterruptedException _
                            (reset! running false))
                          (catch Exception e
-                           (log-event "warn" "sweeper-error"
-                                      {:error (.getMessage e)
-                                       :error-class (.getName (class e))}))))))
+                           (log/log-event "warn" "sweeper-error" {:error (.getMessage e) :error-class (.getName (class e))}))))))
       (.setDaemon true)
       .start)
     #(reset! running false)))
@@ -542,7 +519,6 @@
     (when auto-shutdown?
       (.addShutdownHook (Runtime/getRuntime)
                         (Thread. (fn []
-                                   (log-event "info" "server-shutdown"
-                                              {:reason "JVM shutdown hook"})
+                                   (log/log-event "info" "server-shutdown" {:reason "JVM shutdown hook"})
                                    (stop-server shutdown-timeout)))))
     stop-server))

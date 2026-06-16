@@ -2,7 +2,8 @@
   (:require [mcp-toolkit.json-rpc :as json-rpc]
             [mcp-toolkit.impl.common :refer [user-callback unmunge-name]]
             [mcp-toolkit.registry :as registry]
-            [mcp-toolkit.impl.promise :as p]))
+            [mcp-toolkit.impl.promise :as p]
+            [mcp-toolkit.impl.logging :as log]))
 
 (defn ping-handler [_]
   {})
@@ -73,26 +74,50 @@
 (defn tool-call-handler [{:keys [session message] :as context}]
   (let [{:keys [name arguments]} (:params message)
         reg-ref (:registry @session)]
+    (log/log-event "info" "tool-call-started"
+                   {:tool name
+                    :arg-keys (vec (keys arguments))})
     (if reg-ref
-      ;; Registry mode: unmunge name, O(1) lookup via index
-      (let [tool-name (unmunge-name name)]
+      (let [tool-name (unmunge-name name)
+            start-ms #?(:clj (System/currentTimeMillis) :bb (System/currentTimeMillis) :default 0)]
+        (log/log-event "info" "tool-call-dispatched"
+                       {:tool name :tool-name tool-name})
         (if-some [{:keys [handler timeout]} (registry/find-tool reg-ref tool-name)]
           (-> (if timeout
                 (p/timeout (handler context arguments) timeout)
                 (handler context arguments))
+              (p/then (fn [result]
+                        (log/log-event "info" "tool-call-completed"
+                                       {:tool name
+                                        :duration-ms (- #?(:clj (System/currentTimeMillis) :bb (System/currentTimeMillis) :default 0) start-ms)})
+                        result))
               (p/catch (fn [exception]
+                         (log/log-event "error" "tool-call-error"
+                                        {:tool name
+                                         :duration-ms (- #?(:clj (System/currentTimeMillis) :bb (System/currentTimeMillis) :default 0) start-ms)
+                                         :error (ex-message exception)})
                          {:content [{:type "text"
                                      :text (ex-message exception)}]
                           :isError true})))
           (json-rpc/invalid-tool-name (:id message) name)))
       ;; Legacy mode: look up in session's tool-by-name map
-      (if-some [tool-fn (-> @session :tool-by-name (get name) :tool-fn)]
-        (-> (tool-fn context arguments)
-            (p/catch (fn [exception]
-                       {:content [{:type "text"
-                                   :text (ex-message exception)}]
-                        :isError true})))
-        (json-rpc/invalid-tool-name (:id message) name)))))
+      (let [start-ms #?(:clj (System/currentTimeMillis) :bb (System/currentTimeMillis) :default 0)]
+        (if-some [tool-fn (-> @session :tool-by-name (get name) :tool-fn)]
+          (-> (tool-fn context arguments)
+              (p/then (fn [result]
+                        (log/log-event "info" "tool-call-completed"
+                                       {:tool name
+                                        :duration-ms (- #?(:clj (System/currentTimeMillis) :bb (System/currentTimeMillis) :default 0) start-ms)})
+                        result))
+              (p/catch (fn [exception]
+                         (log/log-event "error" "tool-call-error"
+                                        {:tool name
+                                         :duration-ms (- #?(:clj (System/currentTimeMillis) :bb (System/currentTimeMillis) :default 0) start-ms)
+                                         :error (ex-message exception)})
+                         {:content [{:type "text"
+                                     :text (ex-message exception)}]
+                          :isError true})))
+          (json-rpc/invalid-tool-name (:id message) name))))))
 
 (defn cancelled-notification-handler [{:keys [session message]}]
   (when-some [is-cancelled-atom (-> @session :is-cancelled-by-request-id (get (-> message :params :requestId)))]
