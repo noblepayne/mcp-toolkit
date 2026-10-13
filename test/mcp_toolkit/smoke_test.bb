@@ -6,7 +6,7 @@
 (defn dispatcher [msg sid]
   (let [m (:method msg)]
     (case m
-      "initialize" {:jsonrpc "2.0" :id (:id msg) :result {:serverName "test" :protocolVersion "2025-11-25"}}
+      "initialize" {:jsonrpc "2.0" :id (:id msg) :result {:protocolVersion "2025-11-25" :serverInfo {:name "test" :version "0.1.0"}}}
       "tools/list" {:jsonrpc "2.0" :id (:id msg) :result {:tools [{:name "test-tool" :inputSchema {"type" "object"}}]}}
       "tools/call" {:jsonrpc "2.0" :id (:id msg) :result {:content [{:type "text" :text "ok"}]}}
       nil)))

@@ -5,6 +5,7 @@
 
 An unofficial MCP SDK for Clojure. Handles MCP client-server communication with a
 Clojure-idiomatic API. Targets protocol version **2025-11-25** (Streamable HTTP).
+Negotiates `2024-11-05`, `2025-06-18`, and `2025-11-25`.
 
 ## Fork Additions
 
@@ -57,8 +58,9 @@ returns a response map (or nil for notifications):
     (case m
       "initialize"
       {:jsonrpc "2.0" :id (:id msg)
-       :result {:serverName "my-server" :protocolVersion "2025-11-25"
-                :capabilities {:tools {:listChanged true}}}}
+       :result {:protocolVersion "2025-11-25"
+                :capabilities {:tools {:listChanged true}}
+                :serverInfo {:name "my-server" :version "0.1.0"}}}
       "tools/list"
       {:jsonrpc "2.0" :id (:id msg)
        :result {:tools [{:name "hello" :description "Say hello"
@@ -80,7 +82,10 @@ returns a response map (or nil for notifications):
 ```
 
 For a server using the library's full handler API (tools, prompts, resources
-with the MCP initialization handshake), see the `example/` directory.
+with the MCP initialization handshake), see the `cljc-server-stdio/`
+example for handler wiring (stdio transport). There is currently no
+Streamable HTTP full-handler example -- wire `server/create-session` to
+`http/run-server` via a dispatch fn.
 
 ### Server options
 
@@ -88,7 +93,7 @@ with the MCP initialization handshake), see the `example/` directory.
 (http/run-server dispatch-fn
   {:port             8080               ;; default 0 (random available)
    :host             "0.0.0.0"          ;; default "127.0.0.1"
-   :session-store    (create-session-store)  ;; custom store (optional)
+   :session-store    (http/create-session-store)  ;; custom store (optional)
    :allowed-origins  ["https://app.example.com"]  ;; origin check
    :session-ttl-ms   3600000            ;; expire terminated sessions after 1h
    :sweeper-interval 60000              ;; sweep for stale sessions every 60s
@@ -98,11 +103,13 @@ with the MCP initialization handshake), see the `example/` directory.
 
 ### Custom logging
 
-Bind `*log-fn*` as a dynamic var:
+Bind `log/*log-fn*` as a dynamic var:
 
 ```clojure
-(binding [http/*log-fn* (fn [level event data]
-                          (println level ":" event))]
+(require '[mcp-toolkit.impl.logging :as log])
+
+(binding [log/*log-fn* (fn [level event data]
+                         (println level ":" event))]
   (http/run-server dispatch {:port 8080}))
 ```
 
@@ -133,9 +140,10 @@ For servers with tools from multiple sources:
 ## Babashka Compatibility
 
 Everything in `src/` loads on bb without modification:
-- `streamable_http.clj` -- bb includes http-kit, cheshire, java.time.Instant
+- `streamable_http.clj` -- bb includes http-kit and cheshire, no extra deps
+- `impl/logging.cljc` -- timestamps via `java.time.Instant` (JVM/bb), `js/Date` fallback
 - Promise shim uses `java.util.concurrent.CompletableFuture` (no promesa dep)
-- `clojure.tools.logging` works on bb with no extra config
+- structured logging is dependency-free (JSON println to stderr)
 
 Run the smoke tests:
 ```shell
@@ -152,7 +160,7 @@ nix run .#deps-lock  # regenerate deps-lock.json after changing deps.edn
 ## Testing & Linting
 
 ```shell
-clojure -M:test              # JVM tests (87 tests, kaocha)
+clojure -M:test unit-clj    # JVM tests (kaocha)
 bb test/mcp_toolkit/smoke_test.bb  # Babashka smoke tests (8 tests)
 clj-kondo --lint src/        # lint
 cljfmt fix src/ test/        # format
@@ -160,9 +168,9 @@ cljfmt fix src/ test/        # format
 
 ## MCP Feature Status
 
-- [x] Streamable HTTP (2025-11-25)
-- [x] STDIO
-- [x] SSE (skeleton -- open an issue if you need it)
+- [x] Streamable HTTP (2025-11-25, incl. SSE stream on GET /mcp)
+- [ ] STDIO transport (see example/cljc-server-stdio/ for handler-side wiring)
+- [ ] Standalone SSE transport (see example/clj-server-sse/ for a 2024-11-05 reference)
 - [x] Tools, Prompts, Resources
 - [x] Cancellation, Ping, Progress
 - [x] Roots, Sampling
