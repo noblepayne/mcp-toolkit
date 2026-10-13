@@ -33,7 +33,7 @@ deps.edn (JVM):
 ```clojure
 {:deps {com.noblepayne/mcp-toolkit
         {:git/url "https://github.com/noblepayne/mcp-toolkit"
-         :git/sha "a2836d3"}}}
+         :git/sha "805faaf2475d9301e0faffcba68185e5aea0d395"}}} ;; v0.2.3
 ```
 
 bb.edn (Babashka):
@@ -41,7 +41,7 @@ bb.edn (Babashka):
 {:paths ["src"]
  :deps {com.noblepayne/mcp-toolkit
         {:git/url "https://github.com/noblepayne/mcp-toolkit"
-         :git/sha "a2836d3"}}}
+         :git/sha "805faaf2475d9301e0faffcba68185e5aea0d395"}}} ;; v0.2.3
 ```
 
 ### Minimal server (Babashka)
